@@ -5,6 +5,9 @@ loss can leave behind, rebuilt on a real block device through `dm-log-writes`,
 mounted so the filesystem's own recovery runs, and checked against what your app
 said it had already saved — with the missing `fsync` named.
 
+[![CI](https://github.com/BOTIROFF-D/gray/actions/workflows/ci.yml/badge.svg)](https://github.com/BOTIROFF-D/gray/actions/workflows/ci.yml)
+[![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
+
 Named after Jim Gray, who wrote down what "saved" is supposed to mean.
 
 ---
