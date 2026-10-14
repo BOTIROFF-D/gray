@@ -213,6 +213,10 @@ L.push('- Drives that lie about completing a flush. One of those makes things wo
 L.push('  this table says, never better.');
 L.push('- `mmap`, which bypasses the write path gray watches.');
 L.push('- One architecture, one kernel. Both are printed above so the run can be repeated.');
+L.push('- One run per cell. Where the window is narrow the answer can depend on machine');
+L.push('  timing: xfs loses in ten runs out of ten here, and on a busy shared CI runner it');
+L.push('  came back clean once and lost the next time. Use `--repeat` before trusting a');
+L.push('  cell that says no.');
 
 const report = `${L.join('\n')}\n`;
 writeFileSync(join(root, 'audit/RESULTS.md'), report);

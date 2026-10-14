@@ -68,6 +68,14 @@ method in [`audit/RESULTS.md`](audit/RESULTS.md).
 Three filesystems matter here. A result that only appeared on ext4 would be a
 property of ext4, not of the code under test.
 
+One caveat, found the hard way. On this machine xfs loses in ten runs out of
+ten. On a busy shared CI runner, one xfs run came back clean and the next one
+did not — same commit, same kernel, same `xfsprogs`. The window there is narrow
+enough that machine timing decides, and a single run can miss it. We briefly
+concluded from that one clean run that xfs held the rename, which was wrong.
+This is what `--repeat` is for, and it is the reason a lone green run is not
+evidence — including when the tool producing it is this one.
+
 None of this is a zero-day. Both SQLite and git document the tradeoff in their
 own manuals — SQLite under `PRAGMA synchronous`, git under `core.fsync` — and
 in both cases the default is the risky one. gray rediscovered both from block
