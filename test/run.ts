@@ -157,26 +157,46 @@ expect('the all mode checks strictly more points', allMode.checked > fast.checke
 
 console.log();
 console.log('-- the finding must not be an ext4 quirk --');
-// If the loss only showed up on one filesystem it would be a property of that
-// filesystem, not of the code under test. Both other filesystems run at their
-// defaults, which is what their users run.
+/*
+ * What is an invariant here, and what is merely a measurement.
+ *
+ * The control staying quiet is an invariant: a false alarm on any filesystem
+ * would void that filesystem's column in the audit, and there is no kernel on
+ * which crying wolf is acceptable.
+ *
+ * Whether a particular target loses on a particular filesystem is NOT an
+ * invariant — it is a fact about that kernel, and it is the audit's job to
+ * report it, not this suite's job to require it. An earlier version of this
+ * file demanded that xfs lose. It passed on kernel 6.8/aarch64 and failed on
+ * the first CI run, on 6.17/x86_64, where xfs holds the rename. The tool was
+ * right both times; the test had frozen a measurement into a requirement.
+ *
+ * What is required is weaker and actually true: the loss has to reproduce
+ * somewhere other than ext4, or it would be a property of ext4 rather than of
+ * the code under test.
+ */
+let reproducedElsewhere = false;
 const verdictOf = (v: Verdict) =>
   v.out.split('\n').find((l) => /^(PASS|FAIL|INCONCLUSIVE)/.test(l))?.slice(0, 70) ?? '(no verdict line)';
 
 for (const fs of ['xfs', 'btrfs']) {
   const loses = gray(ex('atomic-write/workload.sh'), ex('atomic-write/check.sh'), ['--fs', fs, '--size', '512']);
   const quiet = gray(ex('atomic-write/workload-correct.sh'), ex('atomic-write/check.sh'), ['--fs', fs, '--size', '512']);
-  expect(
-    `${fs}: the missing directory fsync still loses`,
-    loses.losses > 0,
-    `${loses.losses} of ${loses.checked} — ${verdictOf(loses)}`
-  );
+  // Reported, not required: a measurement of this kernel.
+  console.log(`  ·  ${fs}: missing directory fsync -> ${verdictOf(loses)}`);
   expect(
     `${fs}: the control still stays quiet`,
     quiet.losses === 0,
     `${quiet.losses} of ${quiet.checked} — ${verdictOf(quiet)}`
   );
+  if (loses.losses > 0) reproducedElsewhere = true;
 }
+
+expect(
+  'the loss reproduces on a filesystem other than ext4',
+  reproducedElsewhere,
+  reproducedElsewhere ? '' : 'only ext4 lost — that would make it an ext4 property'
+);
 
 console.log();
 console.log('-- the window must close, and --settle must find it --');
