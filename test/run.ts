@@ -102,13 +102,13 @@ console.log('-- the diagnosis must name the offending call --');
  * name passed on the machine it was written on and failed on the first CI run,
  * which is a test encoding the architecture rather than the behaviour.
  */
-expect('a rename is named', /\brenameat?2?\(/.test(fast.out));
+expect('a rename is named', /\brename(at)?2?\(/.test(fast.out));
 expect('the unsynced directory is named', /directory "[^"]+", and that directory is never fsynced/.test(fast.out));
 // The cause that matters must come first, not be buried under noise: the
 // ranking exists precisely so the top line is the one worth acting on.
 const firstCause = fast.out.split('Likely cause\n')[1]?.split('\n')[0]?.trim() ?? '';
-expect('the top cause is the offending rename', /^renameat?2?\(/.test(firstCause), firstCause.slice(0, 60));
-expect("SQLite's journal unlink is named", /\bunlinkat?\(.*journal/.test(full.out));
+expect('the top cause is the offending rename', /^rename(at)?2?\(/.test(firstCause), firstCause.slice(0, 60));
+expect("SQLite's journal unlink is named", /\bunlink(at)?\(.*journal/.test(full.out));
 
 console.log();
 console.log('-- the fast and paranoid paths must agree --');
@@ -160,11 +160,22 @@ console.log('-- the finding must not be an ext4 quirk --');
 // If the loss only showed up on one filesystem it would be a property of that
 // filesystem, not of the code under test. Both other filesystems run at their
 // defaults, which is what their users run.
+const verdictOf = (v: Verdict) =>
+  v.out.split('\n').find((l) => /^(PASS|FAIL|INCONCLUSIVE)/.test(l))?.slice(0, 70) ?? '(no verdict line)';
+
 for (const fs of ['xfs', 'btrfs']) {
   const loses = gray(ex('atomic-write/workload.sh'), ex('atomic-write/check.sh'), ['--fs', fs, '--size', '512']);
   const quiet = gray(ex('atomic-write/workload-correct.sh'), ex('atomic-write/check.sh'), ['--fs', fs, '--size', '512']);
-  expect(`${fs}: the missing directory fsync still loses`, loses.losses > 0, `${loses.losses} of ${loses.checked}`);
-  expect(`${fs}: the control still stays quiet`, quiet.losses === 0, `${quiet.losses} of ${quiet.checked}`);
+  expect(
+    `${fs}: the missing directory fsync still loses`,
+    loses.losses > 0,
+    `${loses.losses} of ${loses.checked} — ${verdictOf(loses)}`
+  );
+  expect(
+    `${fs}: the control still stays quiet`,
+    quiet.losses === 0,
+    `${quiet.losses} of ${quiet.checked} — ${verdictOf(quiet)}`
+  );
 }
 
 console.log();

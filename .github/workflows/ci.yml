@@ -42,6 +42,10 @@ jobs:
           sudo modprobe xfs
           sudo modprobe btrfs
           sudo dmsetup targets
+          # Printed so a result that differs from another machine can be
+          # explained rather than argued about.
+          uname -rm
+          mkfs.xfs -V; mkfs.btrfs --version | head -1; /sbin/mke2fs -V 2>&1 | head -1
 
       - name: Cross-check the parser and the replay against xfstests
         run: |
