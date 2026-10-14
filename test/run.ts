@@ -94,13 +94,21 @@ console.log('-- the diagnosis must name the offending call --');
 // "lost at crash points #101-#111" cannot be acted on: a person needs the
 // syscall, not the journal entry number. Check that both the call and the
 // unsynced directory are named.
-expect('renameat is named', /renameat\(/.test(fast.out));
+/*
+ * The call family, not one spelling of it.
+ *
+ * aarch64 Linux has no `rename` syscall at all — glibc has to reach for
+ * `renameat` — while on x86_64 both exist and glibc picks. Asserting the exact
+ * name passed on the machine it was written on and failed on the first CI run,
+ * which is a test encoding the architecture rather than the behaviour.
+ */
+expect('a rename is named', /\brenameat?2?\(/.test(fast.out));
 expect('the unsynced directory is named', /directory "[^"]+", and that directory is never fsynced/.test(fast.out));
 // The cause that matters must come first, not be buried under noise: the
 // ranking exists precisely so the top line is the one worth acting on.
 const firstCause = fast.out.split('Likely cause\n')[1]?.split('\n')[0]?.trim() ?? '';
-expect('the top cause is the offending rename', /^renameat\(/.test(firstCause), firstCause.slice(0, 60));
-expect("SQLite's journal unlinkat is named", /unlinkat\(.*journal/.test(full.out));
+expect('the top cause is the offending rename', /^renameat?2?\(/.test(firstCause), firstCause.slice(0, 60));
+expect("SQLite's journal unlink is named", /\bunlinkat?\(.*journal/.test(full.out));
 
 console.log();
 console.log('-- the fast and paranoid paths must agree --');
