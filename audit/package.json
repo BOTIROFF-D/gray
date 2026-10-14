@@ -1,0 +1,19 @@
+{
+  "name": "audit",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "atomically": "^2.1.1",
+    "conf": "^16.0.0",
+    "flat-cache": "^6.1.23",
+    "steno": "^4.0.2",
+    "write-file-atomic": "^8.0.0"
+  }
+}

@@ -1,0 +1,47 @@
+{
+  "name": "@botiroff/gray",
+  "version": "0.1.0",
+  "description": "Prove by enumeration whether your app survives power loss: replays every disk state a crash can leave behind on a real block device, runs your checker on each, and names the fsync you are missing.",
+  "license": "MIT",
+  "type": "module",
+  "bin": {
+    "gray": "./dist/cli.js"
+  },
+  "exports": {
+    ".": "./dist/index.js"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "dev": "node --experimental-strip-types src/cli.ts",
+    "test": "node --experimental-strip-types test/run.ts",
+    "prepublishOnly": "npm run build"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "typescript": "^5.7.2"
+  },
+  "keywords": [
+    "durability",
+    "crash-consistency",
+    "fsync",
+    "power-loss",
+    "dm-log-writes",
+    "device-mapper",
+    "ext4",
+    "testing",
+    "linux"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/BOTIROFF-D/gray.git"
+  },
+  "author": "Doniyor Botirov"
+}

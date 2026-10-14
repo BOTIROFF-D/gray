@@ -1,0 +1,53 @@
+# The VM gray runs its durability tests in.
+#
+#   limactl start --name=gray dev/lima.yaml
+#   limactl shell gray
+#
+# Why a VM rather than a container: this needs device-mapper, loop devices and
+# the dm-log-writes module — a real kernel with root, not a sandbox on top of
+# somebody else's. macOS has none of that.
+#
+# vz is Apple's Virtualization.framework: on M-series chips it is markedly
+# faster than qemu and needs no emulation, the guest being aarch64 too.
+
+vmType: vz
+arch: aarch64
+
+images:
+  - location: "https://cloud-images.ubuntu.com/releases/24.04/release/ubuntu-24.04-server-cloudimg-arm64.img"
+    arch: aarch64
+
+cpus: 8
+memory: "16GiB"
+# The disk is deliberately roomy: enumerating crash points unrolls hundreds
+# of filesystem images, and space runs out before patience does.
+disk: "60GiB"
+
+mounts:
+  - location: "~/gray"
+    writable: true
+
+# The guest needs the dm-log-writes module. In Ubuntu's cloud image it lives
+# in linux-modules-extra, which is not installed by default.
+provision:
+  - mode: system
+    script: |
+      #!/bin/bash
+      set -eux
+      export DEBIAN_FRONTEND=noninteractive
+      apt-get update
+      apt-get install -y --no-install-recommends \
+        linux-modules-extra-$(uname -r) \
+        dmsetup e2fsprogs xfsprogs btrfs-progs \
+        build-essential git curl sqlite3
+      modprobe dm-log-writes
+      modprobe dm-flakey
+      echo dm-log-writes >> /etc/modules-load.d/gray.conf
+      echo dm-flakey     >> /etc/modules-load.d/gray.conf
+
+probes:
+  - description: "dm-log-writes module is loaded"
+    script: |
+      #!/bin/bash
+      set -eux -o pipefail
+      timeout 300s bash -c 'until dmsetup targets | grep -q log-writes; do sleep 3; done'

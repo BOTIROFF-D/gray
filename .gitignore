@@ -1,0 +1,11 @@
+node_modules
+dist
+*.tsbuildinfo
+
+# Audit targets are installed locally; the lockfile would pin a tree that has
+# nothing to do with gray itself.
+audit/node_modules
+audit/package-lock.json
+
+# Working notes for the write-up, not part of the tool.
+dev/FINDINGS.md

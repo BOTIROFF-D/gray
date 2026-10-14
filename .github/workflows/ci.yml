@@ -1,0 +1,52 @@
+# gray needs a real kernel: device-mapper, loop devices and root. The type
+# check runs anywhere; the durability suite needs the dm-log-writes target,
+# which on GitHub runners has to be installed before it can be loaded.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  types:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+
+  durability:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+
+      - name: Kernel support
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y dmsetup sqlite3 strace \
+            "linux-modules-extra-$(uname -r)" || true
+          sudo modprobe dm-log-writes
+          sudo modprobe dm-snapshot
+          sudo dmsetup targets
+
+      - name: Cross-check the parser and the replay against xfstests
+        run: |
+          mkdir -p ref && cd ref
+          B=https://raw.githubusercontent.com/kdave/xfstests/master/src/log-writes
+          for f in log-writes.h log-writes.c replay-log.c; do curl -sfLO $B/$f; done
+          gcc -O2 -o replay-log replay-log.c log-writes.c
+          cd .. && sudo bash dev/mklog.sh /var/tmp/gray-log
+          node --experimental-strip-types test/parser-crosscheck.ts /var/tmp/gray-log/journal.bin ./ref/replay-log
+          node --experimental-strip-types test/replay-crosscheck.ts /var/tmp/gray-log/journal.bin ./ref/replay-log
+
+      - name: Controls, findings and the differential pair
+        run: sudo node --experimental-strip-types test/run.ts
