@@ -127,13 +127,27 @@ expect(
 console.log();
 console.log('-- the verdict must not wander --');
 /*
- * A tool whose answer changes between runs is the thing it was written to
- * catch. gray's verdict is taken from one execution of the workload, so the
- * states it can reach are the ones that execution produced; if its own answer
- * wandered, every number in the audit would be a coin toss.
+ * Careful about what is being required here.
+ *
+ * "The verdict never varies" is a property of the machine, not of the tool.
+ * On a quiet box the loss is found every time; on a busy shared runner the
+ * timing wanders and a run can miss it, because the phenomenon itself is
+ * timing-sensitive. An earlier version of this file demanded stability and
+ * duly failed on CI — the third time in this suite that a measurement had
+ * been frozen into an invariant.
+ *
+ * What is actually required of the tool: when the verdict does wander, it has
+ * to say so rather than quietly report whichever run came last. And a loss
+ * seen even once is a loss — the exit status has to reflect the worst run, not
+ * the luckiest.
  */
 const repeated = gray(ex('atomic-write/workload.sh'), ex('atomic-write/check.sh'), ['--repeat', '3']);
-expect('the same verdict across three runs', /the same verdict every time/.test(repeated.out));
+expect(
+  'repeating reports on stability either way',
+  /the same verdict every time|THE VERDICT VARIED/.test(repeated.out),
+  repeated.out.split('\n').find((l) => l.startsWith('Repeated')) ?? '(said nothing)'
+);
+expect('a loss seen once is still a loss', repeated.code === 1, `exit ${repeated.code}`);
 
 const quietRepeated = gray(ex('atomic-write/workload-correct.sh'), ex('atomic-write/check.sh'), ['--repeat', '3']);
 expect(
