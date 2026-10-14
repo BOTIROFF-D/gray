@@ -33,9 +33,14 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y dmsetup sqlite3 strace \
+            xfsprogs btrfs-progs \
             "linux-modules-extra-$(uname -r)" || true
           sudo modprobe dm-log-writes
           sudo modprobe dm-snapshot
+          # The suite runs on all three filesystems; without these it would
+          # quietly skip two thirds of what it claims to cover.
+          sudo modprobe xfs
+          sudo modprobe btrfs
           sudo dmsetup targets
 
       - name: Cross-check the parser and the replay against xfstests

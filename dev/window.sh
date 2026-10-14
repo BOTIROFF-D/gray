@@ -1,72 +1,43 @@
 #!/bin/sh
-# How wide the loss window is, and what sets its width.
+# How long are you exposed, and what sets the width of the window?
 #
 #   sudo sh dev/window.sh
 #
 # The common expectation is that the kernel flushes everything within
-# dirty_expire_centisecs, thirty seconds by default. It does not: on ext4 the
+# dirty_expire_centisecs — thirty seconds by default. It does not: on ext4 the
 # boundary is held by the journal commit interval. If that is so, then raising
-# `commit` for performance — advice you will find in a lot of tuning guides —
-# widens the window by the same factor.
+# `commit` for performance, advice you will find in plenty of tuning guides,
+# widens the window to lose data in by the same factor.
 #
-# Reproduces the table in README under "loses does not mean always".
+# This uses nothing but gray itself. `--settle n` asks "if the machine stayed
+# up n seconds after the save, is the save safe yet?" — so sweeping n finds
+# where the window closes.
 set -eu
-WORK=/var/tmp/gray-window
-REPLAY_BIN=${GRAY_REPLAY:-$HOME/ref/replay-log}
-MNT=$WORK/mnt
-RMNT=$WORK/rmnt
+cd "$(dirname "$0")/.."
+[ -f dist/cli.js ] || { echo "run npm run build first" >&2; exit 1; }
 
-cleanup() {
-  umount "$MNT" 2>/dev/null || true
-  umount "$RMNT" 2>/dev/null || true
-  dmsetup remove graylog 2>/dev/null || true
-  for img in data log replay; do
-    for l in $(losetup -j "$WORK/$img.img" 2>/dev/null | cut -d: -f1); do
-      losetup -d "$l" 2>/dev/null || true
-    done
+W=./examples/atomic-write/workload.sh
+C=./examples/atomic-write/check.sh
+
+sweep() {
+  mount_opts="$1"; shift
+  echo "-- $mount_opts --"
+  for s in "$@"; do
+    v=$(node dist/cli.js run --workload "$W" --check "$C" \
+          --mount-options "$mount_opts" --settle "$s" 2>/dev/null \
+        | grep -oE '^(PASS|FAIL|INCONCLUSIVE)' || echo '?')
+    case "$v" in
+      PASS) verdict="safe by then" ;;
+      FAIL) verdict="STILL LOSES" ;;
+      *)    verdict="$v" ;;
+    esac
+    printf '  survived %-3s s after the save  ->  %s\n' "$s" "$verdict"
   done
-}
-trap cleanup EXIT
-
-probe() {
-  DELAY="$1"; MOPTS="$2"
-  cleanup; rm -rf "$WORK"; mkdir -p "$WORK" "$MNT" "$RMNT"
-  truncate -s 256M "$WORK/data.img" "$WORK/log.img" "$WORK/replay.img"
-  DATA=$(losetup --show -f "$WORK/data.img")
-  LOG=$(losetup --show -f "$WORK/log.img")
-  REPLAY=$(losetup --show -f "$WORK/replay.img")
-  dmsetup create graylog --table "0 $(blockdev --getsz "$DATA") log-writes $DATA $LOG"
-  mkfs.ext4 -q -F /dev/mapper/graylog
-  mount -o "$MOPTS" /dev/mapper/graylog "$MNT"
-
-  printf 'OLD' > "$MNT/config.json"; sync
-  python3 -c "
-import os, sys
-d = sys.argv[1]
-fd = os.open(d + '/config.json.tmp', os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o644)
-os.write(fd, b'NEW'); os.fsync(fd); os.close(fd)
-os.rename(d + '/config.json.tmp', d + '/config.json')" "$MNT"
-
-  # DELAY is how long the machine kept running after the app said "saved".
-  [ "$DELAY" != "0" ] && sleep "$DELAY"
-  dmsetup message graylog 0 mark acked
-  umount "$MNT"; dmsetup remove graylog
-
-  "$REPLAY_BIN" --log "$LOG" --replay "$REPLAY" --end-mark acked >/dev/null
-  mount "$REPLAY" "$RMNT"
-  GOT=$(cat "$RMNT/config.json" 2>/dev/null || echo NONE)
-  umount "$RMNT"
-  [ "$GOT" = "NEW" ] && echo "intact" || echo "LOST"
+  echo
 }
 
 echo "kernel $(uname -r) · ext4"
 echo
-echo "-- commit=5 (the default) --"
-for d in 0 1 2 3 4 5 6 8; do
-  printf '  power cut after %-4s s  ->  %s\n' "$d" "$(probe "$d" 'data=ordered,commit=5')"
-done
-echo
-echo "-- commit=60 (a common performance tip) --"
-for d in 0 10 30 61 70; do
-  printf '  power cut after %-4s s  ->  %s\n' "$d" "$(probe "$d" 'data=ordered,commit=60')"
-done
+sweep 'data=ordered,commit=1'  0 2 4
+sweep 'data=ordered,commit=5'  0 3 7 10
+sweep 'data=ordered,commit=60' 0 30 70

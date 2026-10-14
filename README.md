@@ -14,26 +14,27 @@ Named after Jim Gray, who wrote down what "saved" is supposed to mean.
 ```
 $ sudo gray run --workload ./save.sh --check ./verify.sh
 
-Journal: 132 entries, 512-byte sectors
-Crash points checked: 23, of them with a promise already made: 17
-Skipped before the workload began (mkfs and mount): 5
+Journal: 133 entries, 512-byte sectors
+Crash points checked: 24, of them with a promise already made: 18
+Skipped before the enumeration starts (mkfs and mount): 5
 
-FAIL — acknowledged data is lost in 3 of 23 checked states.
+FAIL — acknowledged data is lost in 3 of 24 checked states.
 
   crash points #101–#111 after mark "gray:ack:v2"
     acknowledged "v2", found "v1" after recovery
 
 Likely cause
-  renameat("…/data.tmp" → "…/data") changes the contents of directory "…",
-  and that directory is never fsynced afterwards. A directory entry survives
-  power loss only once the directory itself is fsynced — fsyncing the file
-  does not cover it.
+  renameat("…/config.json.tmp" → "…/config.json") changes the contents of
+  directory "…", and that directory is never fsynced afterwards. A directory
+  entry survives power loss only once the directory itself is fsynced —
+  fsyncing the file does not cover it.
 
 What the search did not cover
-  States at flush boundaries were enumerated. Reorderings inside the window
+  Cases at flush boundaries were enumerated. Reorderings inside the window
   between two flushes were not: a drive may commit any subset of the pending
   writes, in any order.
-  States left unchecked by that: ~1.1B.
+  Deepest window: 13 writes in flight.
+  Subsets of them left unenumerated: 9.0 thousand.
 ```
 
 That last block is printed on success too. A tool that stays quiet about the
@@ -42,38 +43,65 @@ exact thing this one exists to argue against.
 
 ## What the audit found
 
-Twelve targets, the same question asked of each: *the app reported success —
-would what it wrote survive the power going out at that moment?*
+Twelve targets, three filesystems, the same question asked of each: *the app
+reported success — would what it wrote survive the power going out at that
+moment?*
 
-**Ten of twelve lose an acknowledged write.** The two that do not are the two
-controls. Full table and method in [`audit/RESULTS.md`](audit/RESULTS.md).
+**Ten of twelve lose an acknowledged write — on ext4, on xfs and on btrfs
+alike.** The two that hold are the two controls. Full table, exact versions and
+method in [`audit/RESULTS.md`](audit/RESULTS.md).
 
-| | loses | call to blame |
-|---|---|---|
-| `write-file-atomic@8` — 102M downloads/week, inside the npm CLI | **yes** | `renameat`, directory never fsynced |
-| `conf@16` — config store behind hundreds of CLIs | **yes** | `renameat`, directory never fsynced |
-| `steno@4` — the writer under lowdb | **yes** | `renameat`, directory never fsynced |
-| `git commit`, default settings | **yes** | `renameat`, directory never fsynced |
-| `git commit` with `core.fsync=all` | **yes** | `renameat`, directory never fsynced |
-| SQLite, `synchronous=FULL` (the default) | **yes** | `unlinkat`, directory never fsynced |
-| SQLite, `synchronous=EXTRA` | no | — |
-| write + fsync + rename + **directory fsync** | no | — |
+| | ext4 | xfs | btrfs | call to blame |
+|---|---|---|---|---|
+| `write-file-atomic@8` — 102M downloads/week, inside the npm CLI | **yes** | **yes** | **yes** | `renameat`, directory never fsynced |
+| `conf@16` — config store behind hundreds of CLIs | **yes** | **yes** | **yes** | `renameat`, directory never fsynced |
+| `steno@4` — the writer under lowdb | **yes** | **yes** | **yes** | `renameat`, directory never fsynced |
+| `git commit`, default settings | **yes** | **yes** | **yes** | `renameat`, directory never fsynced |
+| `git commit` with `core.fsync=all` | **yes** | **yes** | **yes** | `renameat`, directory never fsynced |
+| SQLite, `synchronous=FULL` (the default) | **yes** | **yes** | **yes** | `unlinkat`, directory never fsynced |
+| SQLite, `synchronous=EXTRA` | no | no | no | — |
+| write + fsync + rename + **directory fsync** | no | no | no | — |
+
+Three filesystems matter here. A result that only appeared on ext4 would be a
+property of ext4, not of the code under test.
 
 None of this is a zero-day. Both SQLite and git document the tradeoff in their
 own manuals — SQLite under `PRAGMA synchronous`, git under `core.fsync` — and
 in both cases the default is the risky one. gray rediscovered both from block
-writes alone, which is the best evidence it works that we have.
+writes alone, which is the best evidence it works that we have. What it adds is
+that `core.fsync=all`, git's strictest setting, still does not close the window:
+it fsyncs the files and never the directories they are renamed into.
 
 **"Loses" does not mean your data always disappears.** It means there is a
 window — from the moment the app returned success until the filesystem next
-commits its journal — in which the promise has been made and the medium does
-not know about it. On ext4 at `commit=5` that window is about five seconds. At
-`commit=60`, a tip you will find in a lot of tuning guides, it is about sixty.
+makes that write durable — in which the promise has been made and the medium
+does not know about it.
+
+`--settle n` measures it: *if the machine stayed up n seconds after the save,
+is the save safe yet?*
+
+```
+-- data=ordered,commit=1 --         -- data=ordered,commit=60 --
+  survived 0 s  ->  STILL LOSES       survived 0  s  ->  STILL LOSES
+  survived 2 s  ->  safe by then      survived 30 s  ->  STILL LOSES
+  survived 4 s  ->  safe by then      survived 70 s  ->  safe by then
+```
+
+The window is not the page-cache writeback timer everyone expects
+(`dirty_expire_centisecs`, thirty seconds). It is the **journal commit
+interval**, and it tracks it exactly. Which means `commit=60` — a tip you will
+find in plenty of tuning guides — buys throughput by widening the window you
+can lose acknowledged data in, by a factor of twelve. `dev/window.sh` sweeps
+all three settings and needs nothing but gray.
 
 ## Thirty seconds
 
+From source — the package is not on npm yet:
+
 ```bash
-sudo npx @botiroff/gray run \
+git clone https://github.com/BOTIROFF-D/gray && cd gray && npm ci && npm run build
+
+sudo node dist/cli.js run \
   --workload 'printf saved > $GRAY_MNT/data && gray ack saved' \
   --check    'test "$(cat $GRAY_MNT/data)" = saved'
 ```
@@ -87,6 +115,12 @@ sudo modprobe dm-log-writes
 
 No Linux box handy? `dev/lima.yaml` brings up a VM that is ready to go,
 including on Apple Silicon.
+
+Working pairs to copy from are in [`examples/`](examples): the broken atomic
+write and the fixed one side by side, and SQLite at both settings. Everything
+the audit measured is in [`audit/targets/`](audit/targets), one directory per
+target, and `sudo node --experimental-strip-types audit/run.ts` re-runs the
+whole table.
 
 ## The contract
 
@@ -111,6 +145,62 @@ Inside `--check`:
 A violation only exists relative to an acknowledgement. Before the first `ack`
 every state of the disk is legal, and gray will not let the check complain.
 That is why `$GRAY_ACKED` is a list that grows rather than a fixed expectation.
+
+Exit status is `0` when nothing was lost, `1` when something was, `2` when gray
+could not run — so it drops into CI as it is.
+
+### How long am I exposed?
+
+```bash
+sudo gray run --workload ./save.sh --check ./verify.sh --settle 7
+```
+
+`--settle n` drops every crash that would have happened sooner than n seconds
+after the workload, and enumerates only the rest. It answers the question that
+comes right after "you lose data", and it is how the table above was measured.
+
+### When the workload does not do the same thing twice
+
+gray's verdict comes from one execution of your workload, and the states it can
+enumerate are the ones that execution produced. A workload whose timing wanders
+can present a different journal next time and hide the loss. `--repeat n` runs
+the whole thing n times and says plainly whether the verdict held:
+
+```
+Repeated 5 times: THE VERDICT VARIED — losses per run: 3, 0, 3, 3, 0.
+  Your workload does not do the same thing twice, so a single run of
+  gray cannot settle it. The highest count above is the one to believe:
+  a loss seen once is a loss, a run that missed it proves nothing.
+```
+
+## It refuses to hand you a meaningless pass
+
+Two ways a crash-consistency tool can quietly lie, both of which gray checks on
+itself before it checks on you:
+
+**The workload never promised anything.** No `gray ack`, so `$GRAY_ACKED` is
+empty in every check, every check exits zero, and a naive tool prints PASS.
+
+```
+INCONCLUSIVE — the workload never called `gray ack`.
+  Nothing was promised, so nothing could be violated and $GRAY_ACKED was
+  empty in every check. This run proves nothing about durability.
+```
+
+**The check cannot fail.** Before enumerating anything, gray puts your check in
+front of the disk as it was *before the workload wrote a byte*, and hands it the
+full list of promises. It has to fail there. If it does not, it is not telling a
+saved file apart from an empty one:
+
+```
+INCONCLUSIVE — the check cannot fail.
+  It returns success even on the disk as it was before the workload wrote
+  anything, with every promised key handed to it. It is not telling a
+  saved file apart from an empty one, so its silence means nothing.
+```
+
+Both exit `2`, not `0`, so neither can slip through CI as a green build. A pass
+that could not have been anything else is worth less than an error.
 
 ## How it works
 
@@ -154,6 +244,15 @@ disk honours a flush at all — none of that is visible to a model, by construct
 - **Two independent replay paths**, fast and `--paranoid`, which must agree.
   They did not, once; the disagreement is how we learned that mounting writes
   to the device. That is now a regression test.
+- **Two enumeration modes** — flush boundaries and every single write — which
+  must agree on whether anything is lost, differing only in resolution.
+- **Its own verdict must not wander.** Repeated runs of the same workload have
+  to reach the same answer. A tool whose output drifts between runs is the
+  thing this one was written to catch.
+- **It will not report a pass it could not have failed**, as above.
+- **Every claim above is an assertion in `test/run.ts`**, which runs on ext4,
+  xfs and btrfs. Thirty-one of them, and the findings are tested alongside the
+  controls rather than in a separate suite that nobody runs.
 
 ## What it does not cover
 
@@ -179,8 +278,8 @@ at your code, get back the syscall you are missing.
 ## Requirements
 
 Linux with the `dm-log-writes` and `dm-snapshot` targets, root, Node 22+, and
-`strace` if you want the syscall named. Tested on ext4; `--fs xfs` and
-`--fs btrfs` run but are not yet measured.
+`strace` if you want the syscall named. Measured on ext4, xfs and btrfs;
+the full audit runs on all three.
 
 ## License
 

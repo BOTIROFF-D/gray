@@ -19,10 +19,11 @@ const cli = join(root, 'src/cli.ts');
 type Verdict = { losses: number; checked: number; code: number; out: string };
 
 function gray(workload: string, check: string, extra: string[] = []): Verdict {
+  const fsFlag = extra.includes('--fs');
   const r = spawnSync(
     process.execPath,
     ['--experimental-strip-types', cli, 'run', '--workload', workload, '--check', check,
-     '--mount-options', 'data=ordered,commit=5', ...extra],
+     ...(fsFlag ? [] : ['--mount-options', 'data=ordered,commit=5']), ...extra],
     { encoding: 'utf8', cwd: root }
   );
   const out = `${r.stdout ?? ''}${r.stderr ?? ''}`;
@@ -42,6 +43,9 @@ function expect(name: string, ok: boolean, detail = ''): void {
 }
 
 const ex = (p: string) => join(root, 'examples', p);
+
+// Kept for the inconclusive section below: it must still read as a plain pass.
+const correctFinal = gray(ex('atomic-write/workload-correct.sh'), ex('atomic-write/check.sh'));
 
 console.log('-- controls: gray must stay quiet --');
 
@@ -113,9 +117,95 @@ expect(
 );
 
 console.log();
+console.log('-- the verdict must not wander --');
+/*
+ * A tool whose answer changes between runs is the thing it was written to
+ * catch. gray's verdict is taken from one execution of the workload, so the
+ * states it can reach are the ones that execution produced; if its own answer
+ * wandered, every number in the audit would be a coin toss.
+ */
+const repeated = gray(ex('atomic-write/workload.sh'), ex('atomic-write/check.sh'), ['--repeat', '3']);
+expect('the same verdict across three runs', /the same verdict every time/.test(repeated.out));
+
+const quietRepeated = gray(ex('atomic-write/workload-correct.sh'), ex('atomic-write/check.sh'), ['--repeat', '3']);
+expect(
+  'the control stays quiet across three runs',
+  quietRepeated.losses === 0 && /the same verdict every time/.test(quietRepeated.out),
+  `${quietRepeated.losses} losses`
+);
+
+console.log();
+console.log('-- barriers and all modes must agree on the verdict --');
+// `--mode all` checks every write rather than every barrier, so it reports more
+// failing points. What it must not do is disagree about whether anything is
+// lost at all: the two modes differ in resolution, not in what is true.
+const allMode = gray(ex('atomic-write/workload.sh'), ex('atomic-write/check.sh'), ['--mode', 'all']);
+expect(
+  'both modes find the loss',
+  allMode.losses > 0 && fast.losses > 0,
+  `barriers ${fast.losses}, all ${allMode.losses}`
+);
+expect('the all mode checks strictly more points', allMode.checked > fast.checked, `${fast.checked} -> ${allMode.checked}`);
+
+console.log();
+console.log('-- the finding must not be an ext4 quirk --');
+// If the loss only showed up on one filesystem it would be a property of that
+// filesystem, not of the code under test. Both other filesystems run at their
+// defaults, which is what their users run.
+for (const fs of ['xfs', 'btrfs']) {
+  const loses = gray(ex('atomic-write/workload.sh'), ex('atomic-write/check.sh'), ['--fs', fs, '--size', '512']);
+  const quiet = gray(ex('atomic-write/workload-correct.sh'), ex('atomic-write/check.sh'), ['--fs', fs, '--size', '512']);
+  expect(`${fs}: the missing directory fsync still loses`, loses.losses > 0, `${loses.losses} of ${loses.checked}`);
+  expect(`${fs}: the control still stays quiet`, quiet.losses === 0, `${quiet.losses} of ${quiet.checked}`);
+}
+
+console.log();
+console.log('-- the window must close, and --settle must find it --');
+/*
+ * The loss is not forever. The filesystem commits its journal on a timer, and
+ * once it has, the promise is real. `--settle n` asks whether a machine that
+ * stayed up n seconds is safe yet, so it has to find the far side of that
+ * window — otherwise the tool would be telling people their data is gone when
+ * it is merely late.
+ */
+const settled = gray(ex('atomic-write/workload.sh'), ex('atomic-write/check.sh'), ['--settle', '10']);
+expect('ten seconds of uptime is enough at commit=5', settled.losses === 0, `${settled.losses} losses`);
+expect('and it is a plain pass, not an inconclusive one', /^PASS/m.test(settled.out));
+expect('the report says the crashes were filtered', /Only crashes at least 10s/.test(settled.out));
+expect('no settle still loses', fast.losses > 0, `${fast.losses} losses`);
+
+console.log();
+console.log('-- a run that proves nothing must not look like a pass --');
+/*
+ * The two ways gray could have quietly lied.
+ *
+ * A workload that never promises anything leaves $GRAY_ACKED empty, every
+ * check exits zero, and a naive tool prints PASS. A check that returns zero
+ * unconditionally does the same. Both are green runs that could not have been
+ * anything else — the exact failure this tool was written to argue against,
+ * and there is no excuse for it appearing in the tool itself.
+ */
+const fx = (p: string) => join(root, 'test/fixtures', p);
+
+const noPromise = gray(fx('no-ack.sh'), fx('always-passes.sh'));
+expect('a workload with no ack is called inconclusive', /INCONCLUSIVE.*never called/s.test(noPromise.out));
+expect('and does not exit zero', noPromise.code === 2, `exit ${noPromise.code}`);
+
+const blindCheck = gray(fx('with-ack.sh'), fx('always-passes.sh'));
+expect('a check that cannot fail is called inconclusive', /INCONCLUSIVE.*cannot fail/s.test(blindCheck.out));
+expect('and does not exit zero', blindCheck.code === 2, `exit ${blindCheck.code}`);
+
+expect(
+  'a real control is still a plain pass, not inconclusive',
+  /^PASS/m.test(correctFinal.out) && !/INCONCLUSIVE/.test(correctFinal.out),
+  correctFinal.out.split('\n').find((l) => /^(PASS|FAIL|INCONCLUSIVE)/.test(l)) ?? ''
+);
+
+console.log();
 console.log('-- the report must state the limits of the search --');
 expect('what the search did not cover is printed', /What the search did not cover/.test(fast.out));
-expect('the number of unchecked states is given', /States left unchecked/.test(fast.out));
+expect('the depth of the unexplored window is given', /Deepest window: \d+ writes in flight/.test(fast.out));
+expect('the unenumerated subsets are counted', /Subsets of them left unenumerated/.test(fast.out));
 
 console.log();
 console.log(failed === 0 ? 'ALL CHECKS PASSED' : `FAILED: ${failed}`);
