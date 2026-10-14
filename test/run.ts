@@ -182,8 +182,11 @@ const verdictOf = (v: Verdict) =>
 for (const fs of ['xfs', 'btrfs']) {
   const loses = gray(ex('atomic-write/workload.sh'), ex('atomic-write/check.sh'), ['--fs', fs, '--size', '512']);
   const quiet = gray(ex('atomic-write/workload-correct.sh'), ex('atomic-write/check.sh'), ['--fs', fs, '--size', '512']);
-  // Reported, not required: a measurement of this kernel.
+  // Reported, not required: a measurement of this kernel. The journal line
+  // comes with it, because a machine that disagrees should say what it was.
+  const geometry = loses.out.split('\n').find((l) => l.startsWith('Journal:')) ?? '';
   console.log(`  ·  ${fs}: missing directory fsync -> ${verdictOf(loses)}`);
+  console.log(`  ·  ${fs}: ${geometry}`);
   expect(
     `${fs}: the control still stays quiet`,
     quiet.losses === 0,
