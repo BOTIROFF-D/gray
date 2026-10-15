@@ -5,7 +5,7 @@
   "license": "MIT",
   "type": "module",
   "bin": {
-    "gray": "./dist/cli.js"
+    "gray": "dist/cli.js"
   },
   "exports": {
     ".": "./dist/index.js"

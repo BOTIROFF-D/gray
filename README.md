@@ -6,6 +6,7 @@ mounted so the filesystem's own recovery runs, and checked against what your app
 said it had already saved — with the missing `fsync` named.
 
 [![CI](https://github.com/BOTIROFF-D/gray/actions/workflows/ci.yml/badge.svg)](https://github.com/BOTIROFF-D/gray/actions/workflows/ci.yml)
+[![npm](https://img.shields.io/npm/v/%40botiroff%2Fgray)](https://www.npmjs.com/package/@botiroff/gray)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 Named after Jim Gray, who wrote down what "saved" is supposed to mean.
@@ -107,12 +108,8 @@ all three settings and needs nothing but gray.
 
 ## Thirty seconds
 
-From source — the package is not on npm yet:
-
 ```bash
-git clone https://github.com/BOTIROFF-D/gray && cd gray && npm ci && npm run build
-
-sudo node dist/cli.js run \
+sudo npx @botiroff/gray run \
   --workload 'printf saved > $GRAY_MNT/data && gray ack saved' \
   --check    'test "$(cat $GRAY_MNT/data)" = saved'
 ```
