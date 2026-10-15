@@ -1,0 +1,66 @@
+# Publishing without a token.
+#
+# npm's trusted publishing swaps the long-lived secret for a short-lived OIDC
+# token minted by GitHub for this one workflow run. Nothing to store, nothing
+# to leak, nothing to expire at an inconvenient moment.
+#
+# One-time setup on npmjs.com, which cannot be done from here:
+#   package page -> Settings -> Publishing access -> Trusted publisher
+#   GitHub Actions, repository BOTIROFF-D/gray, workflow release.yml
+#
+# Then a release is a tag:
+#   npm version minor && git push --follow-tags
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+jobs:
+  # A release that publishes untested code is worse than no release. The same
+  # suite CI runs on every commit runs here, on the exact tag being shipped.
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+
+      - name: Kernel support
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y dmsetup sqlite3 strace xfsprogs btrfs-progs \
+            "linux-modules-extra-$(uname -r)" || true
+          sudo modprobe dm-log-writes
+          sudo modprobe dm-snapshot
+          sudo dmsetup targets
+
+      - run: npm ci
+      - run: npm run typecheck
+      - run: sudo node --experimental-strip-types test/run.ts
+
+  publish:
+    needs: verify
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      # The whole point: this is what lets npm mint a short-lived credential
+      # for this run instead of reading a stored token.
+      id-token: write
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+          registry-url: 'https://registry.npmjs.org'
+
+      # Node 22 ships npm 10, which predates trusted publishing. Without this
+      # the publish falls back to looking for a token and fails confusingly.
+      - run: npm install -g npm@latest
+
+      - run: npm ci
+      - run: npm run build
+
+      - name: Publish
+        run: npm publish --access public

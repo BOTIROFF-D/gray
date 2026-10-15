@@ -289,6 +289,19 @@ Linux with the `dm-log-writes` and `dm-snapshot` targets, root, Node 22+, and
 `strace` if you want the syscall named. Measured on ext4, xfs and btrfs;
 the full audit runs on all three.
 
+## Releasing
+
+Publishing goes through npm's trusted publishing: GitHub Actions mints a
+short-lived credential for the run, so there is no token stored anywhere to
+leak or expire. A release is a tag.
+
+```bash
+npm version minor && git push --follow-tags
+```
+
+`.github/workflows/release.yml` runs the full suite against the tag first and
+only publishes if it passes.
+
 ## License
 
 MIT
